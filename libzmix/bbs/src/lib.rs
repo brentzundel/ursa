@@ -44,6 +44,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::HiddenMessage::{ExternalBlinding, ProofSpecificBlinding};
 use crate::ProofMessage::Revealed;
 
+/// Proof messages
+#[macro_use]
+pub mod messages;
 /// Macros and classes used for creating proofs of knowledge
 #[macro_use]
 pub mod pok_vc;
@@ -82,7 +85,7 @@ mod types {
     pub use super::{
         BlindSignatureContext, BlindedSignatureCommitment, ProofRequest, SignatureBlinding,
         SignatureMessage, SignatureMessageVector, SignatureNonce, SignaturePointVector,
-        SignatureProof, ProofMessage, HiddenMessage
+        SignatureProof,
     };
 }
 
@@ -91,11 +94,12 @@ pub mod prelude {
     pub use super::{
         BlindSignatureContext, BlindedSignatureCommitment, ProofRequest, SignatureBlinding,
         SignatureMessage, SignatureMessageVector, SignatureNonce, SignaturePointVector,
-        SignatureProof, ProofMessage, HiddenMessage
+        SignatureProof,
     };
     pub use crate::errors::prelude::*;
     pub use crate::issuer::Issuer;
     pub use crate::keys::prelude::*;
+    pub use crate::messages::{HiddenMessage, ProofMessage};
     pub use crate::pok_sig::prelude::*;
     pub use crate::pok_vc::prelude::*;
     pub use crate::prover::Prover;
@@ -123,54 +127,17 @@ impl BlindSignatureContext {
     const MIN_LENGTH: usize = COMMITMENT_SIZE + MESSAGE_SIZE + 4;
     /// Convert to raw bytes
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut result = Vec::new();
-        result.extend_from_slice(self.commitment.to_bytes().as_slice());
-        result.extend_from_slice(self.challenge_hash.to_bytes().as_slice());
-        let proof_bytes = self.proof_of_hidden_messages.to_bytes();
-        let proof_len = proof_bytes.len() as u32;
-        result.extend_from_slice(&proof_len.to_be_bytes()[..]);
-        result.extend_from_slice(proof_bytes.as_slice());
-        result
+        serde_cbor::to_vec(self).unwrap()
     }
 
     /// Convert from raw bytes
     pub fn from_bytes<I: AsRef<[u8]>>(data: I) -> Result<Self, BBSError> {
         let data = data.as_ref();
-
-        if data.len() < Self::MIN_LENGTH {
-            return Err(BBSErrorKind::InvalidNumberOfBytes(Self::MIN_LENGTH, data.len()).into());
-        }
-
-        let mut offset = 0;
-        let mut end = COMMITMENT_SIZE;
-        let commitment =
-            BlindedSignatureCommitment::from_bytes(&data[offset..end]).map_err(|e| {
-                BBSErrorKind::GeneralError {
-                    msg: format!("{:?}", e),
-                }
-            })?;
-
-        offset = end;
-        end = offset + MESSAGE_SIZE;
-        let challenge_hash = SignatureNonce::from_bytes(&data[offset..end]).map_err(|e| {
-            BBSErrorKind::GeneralError {
-                msg: format!("{:?}", e),
-            }
-        })?;
-
-        offset = end;
-        end = offset + 4;
-        let proof_len = u32::from_be_bytes(*array_ref![data, offset, 4]) as usize;
-        offset = end;
-        end = offset + proof_len;
-        let proof_of_hidden_messages =
-            ProofG1::from_bytes(&data[offset..end]).map_err(|e| BBSErrorKind::GeneralError {
-                msg: format!("{:?}", e),
-            })?;
-        Ok(Self {
-            commitment,
-            challenge_hash,
-            proof_of_hidden_messages,
+        serde_cbor::from_slice(data).map_err(|_| {
+            BBSError::from(BBSErrorKind::InvalidNumberOfBytes(
+                Self::MIN_LENGTH,
+                data.len(),
+            ))
         })
     }
 
@@ -209,7 +176,7 @@ impl BlindSignatureContext {
 
         let challenge_result =
             SignatureMessage::from_msg_hash(challenge_bytes.as_slice()) - &self.challenge_hash;
-        let commitment_result = commitment - &self.commitment;
+        let commitment_result = commitment - &self.proof_of_hidden_messages.commitment;
         Ok(commitment_result.is_identity() && challenge_result.is_zero())
     }
 }
@@ -226,12 +193,19 @@ pub struct ProofRequest {
     pub verification_key: PublicKey,
 }
 
-// impl ProofRequest {
-//     pub fn to_bytes(&self) -> Vec<u8> {
-//         let mut result = self.nonce.to_bytes();
-//         let num_messages =
-//     }
-// }
+impl ProofRequest {
+    /// Convert to raw bytes
+    pub fn to_bytes(&self) -> Vec<u8> {
+        serde_cbor::to_vec(self).unwrap()
+    }
+
+    /// Convert from raw bytes
+    pub fn from_bytes<I: AsRef<[u8]>>(data: I) -> Result<Self, BBSError> {
+        let data = data.as_ref();
+        serde_cbor::from_slice(data)
+            .map_err(|_| BBSError::from(BBSErrorKind::InvalidNumberOfBytes(8, data.len())))
+    }
+}
 
 /// Contains the data from a prover to a verifier
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,35 +214,19 @@ pub struct SignatureProof {
     proof: PoKOfSignatureProof,
 }
 
-/// Two types of message may be included in a proof
-pub enum ProofMessage {
-    /// Revealed messages are shown to a verifier
-    Revealed(SignatureMessage),
-    /// Hidden messages are not shown to a verifier
-    Hidden(HiddenMessage)
-}
+impl SignatureProof {
+    /// Convert to raw bytes
+    pub fn to_bytes(&self) -> Vec<u8> {
+        serde_cbor::to_vec(self).unwrap()
+    }
 
-impl ProofMessage{
-    /// Returns the SignatureMessage from a ProofMessage
-    pub fn get_message(&self) -> SignatureMessage {
-        match &*self {
-            Revealed(r) => r.clone(),
-            ProofMessage::Hidden(h) => match h {
-                ProofSpecificBlinding(p) => p.clone(),
-                ExternalBlinding(m,_) => m.clone()
-            }
-        }
+    /// Convert from raw bytes
+    pub fn from_bytes<I: AsRef<[u8]>>(data: I) -> Result<Self, BBSError> {
+        let data = data.as_ref();
+        serde_cbor::from_slice(data)
+            .map_err(|_| BBSError::from(BBSErrorKind::InvalidNumberOfBytes(8, data.len())))
     }
 }
-
-/// Two types of hidden messages may be contained in a proof
-pub enum HiddenMessage {
-    /// Those whose blinding may be generated as it is used
-    ProofSpecificBlinding(SignatureMessage),
-    /// Those whose blinding is shared by other Messages
-    ExternalBlinding(SignatureMessage, SignatureNonce)
-}
-
 
 #[cfg(test)]
 mod tests {

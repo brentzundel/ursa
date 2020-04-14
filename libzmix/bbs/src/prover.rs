@@ -4,8 +4,8 @@
 /// or can have some (0 to all) messages blindly signed by the issuer.
 use crate::prelude::*;
 
+use crate::messages::*;
 use std::collections::BTreeMap;
-use crate::ProofMessage;
 
 /// This struct represents a Prover who receives signatures or proves with them.
 /// Provided are methods for 2PC where some are only known to the prover and a blind signature
@@ -100,19 +100,18 @@ impl Prover {
     pub fn new_signature_pok(
         request: &ProofRequest,
         proof_messages: &[ProofMessage],
-        signature: &Signature
-    ) -> Result<SignatureProof, BBSError> {
-        let pok = PoKOfSignature::init(
-            &signature,
-            &request.verification_key,
-            proof_messages
-        )?;
-        let mut challenge_bytes = pok.to_bytes();
-        challenge_bytes.extend_from_slice(request.nonce.to_bytes().as_slice());
+        signature: &Signature,
+    ) -> Result<PoKOfSignature, BBSError> {
+        PoKOfSignature::init(&signature, &request.verification_key, proof_messages)
+    }
 
-        let challenge_hash = SignatureMessage::from_msg_hash(&challenge_bytes);
-        let revealed_messages = pok.revealed_messages.clone();
-        let proof = pok.gen_proof(&challenge_hash)?;
+    /// Convert the a committed proof of signature knowledge to the proof
+    pub fn generate_signature_pok(
+        pok_sig: PoKOfSignature,
+        challenge: &SignatureNonce,
+    ) -> Result<SignatureProof, BBSError> {
+        let revealed_messages = (&pok_sig.revealed_messages).clone();
+        let proof = pok_sig.gen_proof(&challenge)?;
 
         Ok(SignatureProof {
             revealed_messages,
