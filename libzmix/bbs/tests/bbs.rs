@@ -478,7 +478,8 @@ fn bbs_demo() {
         Ok(_) => assert!(true),   // check revealed messages
         Err(_) => assert!(false), // Why did the proof fail?
     };
-    // Verifier checks proof2
+
+    // Verifier checks proof1
     let res2 = proof2.proof.verify(
         &proof_request2.verification_key,
         &proof2.revealed_messages,
